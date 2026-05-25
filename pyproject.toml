@@ -9,6 +9,7 @@ dependencies = [
     "httpx",
     "jinja2",
     "rich",
+    "textual>=8.2.7",
 ]
 
 [project.scripts]

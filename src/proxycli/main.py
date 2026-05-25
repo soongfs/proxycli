@@ -66,6 +66,22 @@ def cli(ctx: click.Context, config_path: Path, verbose: bool) -> None:
     ctx.obj = ProxyContext(config_path=config_path, verbose=verbose)
 
 
+@cli.command()
+@click.option(
+    "--config",
+    "-c",
+    "config_path",
+    type=click.Path(path_type=Path, dir_okay=False),
+    default=None,
+    help="Path to sing-box config JSON.",
+)
+def tui(config_path: Path | None) -> None:
+    """Launch the interactive terminal UI."""
+    from proxycli.tui import ProxyTuiApp
+    app = ProxyTuiApp(config_path=config_path)
+    app.run()
+
+
 @cli.group()
 def sub() -> None:
     """Manage proxy subscriptions."""
