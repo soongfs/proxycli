@@ -1,0 +1,30 @@
+[project]
+name = "proxycli"
+version = "0.1.0"
+description = "Manage a sing-box proxy on macOS via subscription imports and CLI controls."
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "click",
+    "httpx",
+    "jinja2",
+    "rich",
+]
+
+[project.scripts]
+proxycli = "proxycli.main:cli"
+
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+proxycli = ["templates/*.j2"]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.0.3",
+]

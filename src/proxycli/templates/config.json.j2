@@ -1,0 +1,150 @@
+{
+  "log": {
+    "level": "info"
+  },
+  "dns": {
+    "servers": [
+      {
+        "type": "udp",
+        "tag": "local_local",
+        "server": "119.29.29.29"
+      },
+      {
+        "type": "https",
+        "tag": "remote_dns",
+        "server": "cloudflare-dns.com",
+        "domain_resolver": "hosts_dns",
+        "path": "/dns-query",
+        "detour": "proxy"
+      },
+      {
+        "type": "udp",
+        "tag": "direct_dns",
+        "server": "119.29.29.29",
+        "domain_resolver": "local_local"
+      },
+      {
+        "type": "hosts",
+        "tag": "hosts_dns",
+        "predefined": {
+          "dns.google": ["8.8.8.8", "8.8.4.4"],
+          "dns.alidns.com": ["223.5.5.5", "223.6.6.6"],
+          "one.one.one.one": ["1.1.1.1", "1.0.0.1"],
+          "cloudflare-dns.com": ["104.16.249.249", "104.16.248.249"],
+          "doh.pub": ["1.12.12.12", "120.53.53.53"],
+          "dot.pub": ["1.12.12.12", "120.53.53.53"]
+        }
+      }
+    ],
+    "rules": [
+      {
+        "server": "hosts_dns",
+        "ip_accept_any": true
+      },
+      {
+        "server": "direct_dns",
+        "rule_set": "geosite-cn"
+      },
+      {
+        "server": "remote_dns",
+        "query_type": ["A", "AAAA"]
+      }
+    ],
+    "final": "remote_dns",
+    "independent_cache": true
+  },
+  "inbounds": [
+    {
+      "type": "mixed",
+      "tag": "mixed-in",
+      "listen": "127.0.0.1",
+      "listen_port": 7890
+    },
+    {
+      "type": "tun",
+      "tag": "tun-in",
+      "interface_name": "utun8",
+      "address": [
+        "172.19.0.1/30",
+        "fdfe:dcba:9876::1/126"
+      ],
+      "auto_route": true,
+      "auto_redirect": false,
+      "strict_route": true,
+      "stack": "system"
+    }
+  ],
+  "outbounds": [
+    {
+      "type": "direct",
+      "tag": "direct"
+    },
+    {
+      "type": "selector",
+      "tag": "proxy",
+      "outbounds": {{ node_tags | tojson }}
+    }
+{% for node in nodes %}
+    ,
+    {{ node | tojson }}
+{% endfor %}
+  ],
+  "route": {
+    "auto_detect_interface": true,
+    "default_domain_resolver": {
+      "server": "direct_dns"
+    },
+    "rule_set": [
+      {
+        "type": "local",
+        "tag": "geoip-cn",
+        "format": "binary",
+        "path": {{ rule_set_paths["geoip-cn"] | tojson }}
+      },
+      {
+        "type": "local",
+        "tag": "geosite-cn",
+        "format": "binary",
+        "path": {{ rule_set_paths["geosite-cn"] | tojson }}
+      }
+    ],
+    "rules": [
+      {
+        "action": "sniff"
+      },
+      {
+        "protocol": ["dns"],
+        "action": "hijack-dns"
+      },
+      {
+        "network": ["udp"],
+        "port": [443],
+        "action": "reject"
+      },
+      {
+        "outbound": "direct",
+        "ip_cidr": [
+          "223.5.5.5", "223.6.6.6",
+          "119.29.29.29",
+          "1.12.12.12", "120.53.53.53",
+          "180.76.76.76",
+          "114.114.114.114", "114.114.115.115",
+          "1.2.4.8", "210.2.4.8"
+        ]
+      },
+      {
+        "outbound": "direct",
+        "domain_suffix": {{ direct_domains | tojson }}
+      },
+      {
+        "outbound": "direct",
+        "rule_set": "geoip-cn"
+      },
+      {
+        "outbound": "direct",
+        "rule_set": "geosite-cn"
+      }
+    ],
+    "final": "proxy"
+  }
+}
