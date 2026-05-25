@@ -1,0 +1,60 @@
+name: build
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: linux
+          - os: macos-latest
+            target: macos
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          pip install pyinstaller
+          pip install click httpx jinja2 rich
+
+      - name: Build binary
+        run: |
+          pyinstaller --onefile --name proxycli \
+            --add-data "src/proxycli/templates:proxycli/templates" \
+            src/proxycli/main.py
+        env:
+          PYTHONPATH: ${{ github.workspace }}/src
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: proxycli-${{ matrix.target }}
+          path: dist/proxycli*
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: proxycli-*
+          merge-multiple: true
+          path: dist
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*
+          generate_release_notes: true

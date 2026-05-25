@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import platform
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -31,8 +32,14 @@ def rule_set_dir() -> Path:
     return app_dir() / "rule-sets"
 
 
-TEMPLATE_DIR = Path(__file__).parent / "templates"
 TEMPLATE_NAME = "config.json.j2"
+
+
+def _template_dir() -> Path:
+    """Return the templates directory, supporting PyInstaller bundles."""
+    if getattr(sys, "frozen", False):
+        return Path(sys._MEIPASS) / "proxycli" / "templates"  # type: ignore[attr-defined]
+    return Path(__file__).parent / "templates"
 
 _DEFAULT_DIRECT_DOMAINS: list[str] = [
     "deepseek.com",
@@ -51,7 +58,7 @@ _DEFAULT_DIRECT_DOMAINS: list[str] = [
 def load_template() -> Template:
     """Load the default sing-box configuration Jinja2 template."""
     environment = Environment(
-        loader=FileSystemLoader(TEMPLATE_DIR),
+        loader=FileSystemLoader(_template_dir()),
         autoescape=select_autoescape(enabled_extensions=()),
         trim_blocks=True,
         lstrip_blocks=True,
