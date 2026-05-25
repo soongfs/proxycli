@@ -63,7 +63,7 @@
     {
       "type": "tun",
       "tag": "tun-in",
-      "interface_name": "utun8",
+      "interface_name": {{ tun["interface_name"] | tojson }},
       "address": [
         "172.19.0.1/30",
         "fdfe:dcba:9876::1/126"
@@ -71,7 +71,7 @@
       "auto_route": true,
       "auto_redirect": false,
       "strict_route": true,
-      "stack": "system"
+      "stack": {{ tun["stack"] | tojson }}
     }
   ],
   "outbounds": [

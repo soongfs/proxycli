@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import platform
 from pathlib import Path
 from typing import Any
 
@@ -75,11 +76,19 @@ def generate_config(
         "geoip-cn": str(rd / "geoip-cn.srs"),
         "geosite-cn": str(rd / "geosite-cn.srs"),
     }
+
+    is_macos = platform.system() == "Darwin"
+    tun = {
+        "interface_name": "utun8" if is_macos else "tun0",
+        "stack": "system" if is_macos else "mixed",
+    }
+
     rendered = load_template().render(
         nodes=nodes,
         node_tags=node_tags,
         direct_domains=direct_domains,
         rule_set_paths=rule_set_paths,
+        tun=tun,
     )
 
     parsed = json.loads(rendered)
