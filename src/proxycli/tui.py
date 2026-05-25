@@ -53,7 +53,7 @@ class ProxyTuiApp(App):
     def __init__(self, config_path: Path | None = None):
         super().__init__()
         self._config_path = config_path or default_config_path()
-        self._nodes: list[dict] = []
+        self._outbounds: list[dict] = []
         self._tags: list[str] = []
         self._current_tag: str | None = None
 
@@ -83,7 +83,7 @@ class ProxyTuiApp(App):
         self._current_tag = self._extract_current_node(config)
 
         outbounds = config.get("outbounds", [])
-        self._nodes = [
+        self._outbounds = [
             o for o in outbounds
             if o.get("tag") in self._tags
             and o.get("server")
@@ -181,7 +181,7 @@ class ProxyTuiApp(App):
 
     def action_test_latency(self) -> None:
         table = self.query_one(DataTable)
-        for i, node in enumerate(self._nodes):
+        for i, node in enumerate(self._outbounds):
             latency = self._tcp_ping(
                 str(node["server"]), int(node["server_port"]), timeout=3.0,
             )
