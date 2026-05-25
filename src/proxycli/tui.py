@@ -7,9 +7,9 @@ import socket
 import time
 from pathlib import Path
 
+from textual import work
 from textual.app import App, ComposeResult
-from textual.widgets import DataTable, Footer, Header, Static
-from textual.containers import Container
+from textual.widgets import DataTable, Footer, Header
 
 from proxycli import __version__
 from proxycli.config import default_config_path, read_config
@@ -19,27 +19,7 @@ from proxycli.daemon import reload_daemon, status_daemon
 class ProxyTuiApp(App):
     """Interactive terminal UI for proxycli."""
 
-    CSS = """
-    Screen {
-        layout: grid;
-        grid-rows: auto 1fr auto;
-    }
-
-    #status-bar {
-        height: 1;
-        dock: top;
-    }
-
-    DataTable {
-        height: 1fr;
-    }
-
-    #hint {
-        height: 1;
-        dock: bottom;
-        text-style: dim;
-    }
-    """
+    CSS = ""
 
     BINDINGS = [
         ("j", "cursor_down", "Down"),
@@ -56,10 +36,11 @@ class ProxyTuiApp(App):
         self._outbounds: list[dict] = []
         self._tags: list[str] = []
         self._current_tag: str | None = None
+        self._latency_results: dict[str, str] = {}
+        self.title = f"proxycli {__version__}"
 
     def compose(self) -> ComposeResult:
-        yield Header(show_clock=True)
-        yield Static("", id="status-bar")
+        yield Header(show_clock=False)
         yield DataTable(cursor_type="row")
         yield Footer()
 
@@ -93,8 +74,12 @@ class ProxyTuiApp(App):
         table = self.query_one(DataTable)
         table.clear()
         for i, tag in enumerate(self._tags):
-            style = "bold green" if tag == self._current_tag else ""
-            table.add_row(str(i + 1), tag, "", key=tag)
+            table.add_row(
+                str(i + 1),
+                tag,
+                self._latency_results.get(tag, ""),
+                key=tag,
+            )
 
         self._update_status()
 
@@ -113,10 +98,8 @@ class ProxyTuiApp(App):
     def _update_status(self) -> None:
         daemon = "running" if status_daemon() else "stopped"
         current = self._current_tag or "none"
-        status = self.query_one("#status-bar", Static)
-        status.update(
-            f" daemon: {daemon} | node: {current} | "
-            f"nodes: {len(self._tags)} | proxycli {__version__}"
+        self.sub_title = (
+            f"daemon: {daemon} | node: {current} | nodes: {len(self._tags)}"
         )
 
     def action_cursor_down(self) -> None:
@@ -132,12 +115,10 @@ class ProxyTuiApp(App):
         if table.row_count == 0:
             return
 
-        try:
-            row_key = table.ordered_rows[table.cursor_row].key  # type: ignore[union-attr]
-            tag = str(row_key.value) if row_key else ""
-        except (IndexError, AttributeError):
-            return
+        table.action_select_cursor()
 
+    def on_data_table_row_selected(self, event: DataTable.RowSelected) -> None:
+        tag = str(event.row_key.value)
         if not tag or tag not in self._tags:
             return
 
@@ -179,18 +160,34 @@ class ProxyTuiApp(App):
         self._refresh_data()
         self.notify("Refreshed")
 
+    @work(thread=True)
     def action_test_latency(self) -> None:
-        table = self.query_one(DataTable)
-        for i, node in enumerate(self._outbounds):
-            latency = self._tcp_ping(
-                str(node["server"]), int(node["server_port"]), timeout=3.0,
-            )
-            label = f"{latency:.0f}ms" if latency is not None else "timeout"
+        for node in list(self._outbounds):
+            tag = str(node.get("tag", ""))
+            if not tag:
+                continue
+
             try:
-                table.update_cell(node["tag"], "Latency", label)
+                latency = self._tcp_ping(
+                    str(node["server"]),
+                    int(node["server_port"]),
+                    timeout=3.0,
+                )
+                label = f"{latency:.0f}ms" if latency is not None else "timeout"
             except Exception:
-                pass
-        self.notify("Latency test complete")
+                label = "err"
+
+            self.call_from_thread(self._update_latency_cell, tag, label)
+
+        self.call_from_thread(self.notify, "Latency test complete")
+
+    def _update_latency_cell(self, tag: str, label: str) -> None:
+        self._latency_results[tag] = label
+        if tag not in self._tags:
+            return
+
+        table = self.query_one(DataTable)
+        table.update_cell(tag, "Latency", label)
 
     @staticmethod
     def _tcp_ping(host: str, port: int, timeout: float) -> float | None:
