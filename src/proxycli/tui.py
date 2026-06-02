@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import socket
+import sys
 import time
 from pathlib import Path
 
@@ -169,6 +170,12 @@ class ProxyTuiApp(App):
                 )
 
     def action_quit(self) -> None:
+        if self.needs_restart:
+            sys.stderr.write(
+                "\n⚠  Config updated. Apply changes:\n"
+                "   sudo ~/.local/bin/proxycli daemon restart\n\n"
+            )
+            sys.stderr.flush()
         self.exit()
 
     def action_refresh(self) -> None:
