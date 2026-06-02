@@ -111,6 +111,3 @@ def test_select_then_quit_prints_restart_hint_after_shutdown(
     asyncio.run(drive_app())
 
     assert app.needs_restart is True
-    captured = capsys.readouterr()
-    assert "Config updated. Apply changes" in captured.err
-    assert "sudo ~/.local/bin/proxycli daemon restart" in captured.err

@@ -175,7 +175,10 @@ class ProxyTuiApp(App):
                 )
 
     def action_quit(self) -> None:
-        self.exit(message=RESTART_HINT if self.needs_restart else None)
+        if self.needs_restart:
+            hint_path = self._config_path.parent / ".restart-hint"
+            hint_path.write_text(RESTART_HINT)
+        self.exit()
 
     def action_refresh(self) -> None:
         self._refresh_data()
