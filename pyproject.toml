@@ -8,6 +8,7 @@ dependencies = [
     "click",
     "httpx",
     "jinja2",
+    "prompt-toolkit>=3.0",
     "rich",
 ]
 

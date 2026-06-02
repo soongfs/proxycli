@@ -214,11 +214,12 @@ def status_daemon() -> bool:
     return bool(pid and _is_running(pid))
 
 
-def reload_daemon() -> None:
+def reload_daemon(use_sudo: bool = False) -> None:
     """Send SIGHUP to sing-box to trigger a graceful config reload.
 
-    Tries direct signal first, falls back to sudo when the daemon was
-    started as root (needed on macOS where non-root cannot signal root).
+    Set *use_sudo* to True when running in a CLI context where password
+    prompts are acceptable. In TUI/automated contexts, leave it False
+    and handle the PermissionError yourself.
     """
     pid = _read_pid()
     if pid is None or not _is_running(pid):
@@ -227,15 +228,18 @@ def reload_daemon() -> None:
     try:
         os.kill(pid, signal.SIGHUP)
     except PermissionError:
-        try:
-            subprocess.run(
-                ["sudo", "kill", "-HUP", str(pid)],
-                check=True, capture_output=True, text=True,
-            )
-        except subprocess.CalledProcessError as exc:
-            raise RuntimeError(
-                f"failed to reload sing-box (PID {pid}): {exc.stderr.strip()}"
-            ) from exc
+        if use_sudo:
+            try:
+                subprocess.run(
+                    ["sudo", "kill", "-HUP", str(pid)],
+                    check=True, capture_output=True, text=True,
+                )
+            except subprocess.CalledProcessError as exc:
+                raise RuntimeError(
+                    f"failed to reload sing-box (PID {pid}): {exc.stderr.strip()}"
+                ) from exc
+        else:
+            raise
 
 
 def get_logs(lines: int = 100) -> str:

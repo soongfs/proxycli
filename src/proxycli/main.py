@@ -66,6 +66,26 @@ def cli(ctx: click.Context, config_path: Path, verbose: bool) -> None:
     ctx.obj = ProxyContext(config_path=config_path, verbose=verbose)
 
 
+@cli.command()
+@click.option(
+    "--config",
+    "-c",
+    "config_path",
+    type=click.Path(path_type=Path, dir_okay=False),
+    default=None,
+    help="Path to sing-box config JSON.",
+)
+def tui(config_path: Path | None) -> None:
+    """Launch the interactive terminal UI."""
+    from proxycli.tui import run_node_selector
+
+    if run_node_selector(config_path=config_path):
+        print(
+            "\n⚠  Config updated. Apply changes:\n"
+            "   sudo ~/.local/bin/proxycli daemon restart\n"
+        )
+
+
 @cli.group()
 def sub() -> None:
     """Manage proxy subscriptions."""
@@ -171,7 +191,7 @@ def _switch_node_via_config(config_path: Path, tag: str) -> str:
     if not daemon_module.status_daemon():
         return "config update; daemon is stopped, run sudo uv run proxycli daemon start"
 
-    daemon_module.reload_daemon()
+    daemon_module.reload_daemon(use_sudo=True)
     return "config reload"
 
 
