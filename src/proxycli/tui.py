@@ -39,6 +39,7 @@ class ProxyTuiApp(App):
         self._tag_to_index: dict[str, int] = {}
         self._current_tag: str | None = None
         self._latency_results: dict[str, str] = {}
+        self._needs_restart: bool = False
         self.title = f"proxycli {__version__}"
 
     def compose(self) -> ComposeResult:
@@ -128,6 +129,7 @@ class ProxyTuiApp(App):
         try:
             self._switch_node(tag)
             self._current_tag = tag
+            self._needs_restart = True
             self._refresh_data()
         except Exception as exc:
             self.notify(f"Error: {exc}", severity="error")
@@ -165,6 +167,16 @@ class ProxyTuiApp(App):
                     "sudo ~/.local/bin/proxycli daemon restart",
                     severity="warning",
                 )
+
+    def action_quit(self) -> None:
+        if self._needs_restart:
+            self.notify(
+                "Restart daemon to apply changes: "
+                "sudo ~/.local/bin/proxycli daemon restart",
+                severity="warning",
+                timeout=10,
+            )
+        self.exit()
 
     def action_refresh(self) -> None:
         self._refresh_data()

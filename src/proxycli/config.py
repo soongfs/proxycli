@@ -16,7 +16,8 @@ def app_dir() -> Path:
     """Return the proxycli config directory, respecting SUDO_USER."""
     sudo_user = os.environ.get("SUDO_USER")
     if sudo_user:
-        return Path(f"/home/{sudo_user}") / ".config" / "proxycli"
+        import pwd
+        return Path(pwd.getpwnam(sudo_user).pw_dir) / ".config" / "proxycli"
     return Path.home() / ".config" / "proxycli"
 
 
