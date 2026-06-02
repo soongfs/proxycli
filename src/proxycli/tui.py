@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any
 
 from prompt_toolkit import Application
+from prompt_toolkit.data_structures import Point
 from prompt_toolkit.formatted_text import FormattedText
 from prompt_toolkit.key_binding import KeyBindings
 from prompt_toolkit.keys import Keys
@@ -194,7 +195,7 @@ def run_node_selector(config_path: Path | None = None) -> bool:
         nonlocal cursor
         if visible:
             cursor = (cursor + delta) % len(visible)
-            app.invalidate()
+            redraw()
 
     def body_rows() -> int:
         try:
@@ -216,10 +217,9 @@ def run_node_selector(config_path: Path | None = None) -> bool:
     def _pad_line(line: str) -> str:
         """Pad line with trailing spaces to full terminal width.
 
-        Essential for CJK/emoji: prompt_toolkit's incremental renderer tracks
-        cells by Python char index, which breaks when a 2-cell char (emoji/CJK)
-        is replaced by a 1-cell char (ASCII). Padding every line to terminal
-        width forces a full cell overwrite, preventing residue artifacts.
+        This keeps normal line-length shrinkage tidy. CJK/emoji residue is
+        handled by force_full_redraw(), which disables prompt_toolkit's
+        incremental diff for each paint.
         """
         content = line.rstrip("\n")
         tw = terminal_width()
@@ -227,6 +227,29 @@ def run_node_selector(config_path: Path | None = None) -> bool:
         if dw < tw:
             return content + " " * (tw - dw) + "\n"
         return line
+
+    def force_full_redraw(render_app: Application[Any]) -> None:
+        """Force prompt_toolkit paints to start from a blank screen.
+
+        prompt_toolkit's diff renderer models each regional-indicator flag as
+        two double-width characters, while terminals display the grapheme as a
+        single two-cell emoji. After a row containing CJK/emoji is repainted
+        incrementally, the renderer's cursor/cell bookkeeping can diverge from
+        the terminal and leave previous-frame cells behind.
+
+        Forgetting _last_screen makes prompt_toolkit call erase_down() and
+        repaint the full alternate screen. Moving to absolute home first avoids
+        relying on the renderer's possibly stale relative cursor position.
+        """
+        renderer = render_app.renderer
+        if renderer._in_alternate_screen:
+            render_app.output.cursor_goto(0, 0)
+            renderer._cursor_pos = Point(x=0, y=0)
+        renderer._last_screen = None
+
+    def redraw() -> None:
+        """Schedule a repaint; force_full_redraw makes it non-incremental."""
+        app.invalidate()
 
     def render_header() -> FormattedText:
         current = current_tag or "none"
@@ -276,7 +299,7 @@ def run_node_selector(config_path: Path | None = None) -> bool:
     async def ping_task(tag: str, server: str, port: int) -> None:
         result = await asyncio.to_thread(_tcp_ping, server, port, 3.0)
         latency[tag] = f"{result:.0f}ms" if result is not None else "timeout"
-        app.invalidate()
+        redraw()
 
     def switch_selected() -> None:
         nonlocal needs_restart, current_tag, message
@@ -293,7 +316,7 @@ def run_node_selector(config_path: Path | None = None) -> bool:
             current_tag = tag
             load(preferred=tag)
             message = switch_message
-        app.invalidate()
+        redraw()
 
     def test_selected() -> None:
         nonlocal message
@@ -307,15 +330,15 @@ def run_node_selector(config_path: Path | None = None) -> bool:
         except (TypeError, ValueError):
             latency[tag] = "n/a"
             message = f"missing server port for {tag}"
-            app.invalidate()
+            redraw()
             return
         if not server:
             latency[tag] = "n/a"
             message = f"missing server for {tag}"
-            app.invalidate()
+            redraw()
             return
         latency[tag] = "..."
-        app.invalidate()
+        redraw()
         app.create_background_task(ping_task(tag, server, port))
 
     kb = KeyBindings()
@@ -349,7 +372,7 @@ def run_node_selector(config_path: Path | None = None) -> bool:
         if filter_text:
             filter_text = filter_text[:-1]
             rebuild_visible()
-            app.invalidate()
+            redraw()
 
     @kb.add("escape")
     def _(event: Any) -> None:
@@ -357,7 +380,7 @@ def run_node_selector(config_path: Path | None = None) -> bool:
         if filter_text:
             filter_text = ""
             rebuild_visible()
-            app.invalidate()
+            redraw()
 
     @kb.add(Keys.Any)
     def _(event: Any) -> None:
@@ -365,7 +388,7 @@ def run_node_selector(config_path: Path | None = None) -> bool:
         if event.data and event.data.isprintable():
             filter_text += event.data
             rebuild_visible()
-            app.invalidate()
+            redraw()
 
     root = HSplit(
         [
@@ -379,6 +402,7 @@ def run_node_selector(config_path: Path | None = None) -> bool:
         key_bindings=kb,
         style=Style.from_dict({"header": "bold", "footer": "fg:#888888", "table.header": "bold"}),
         full_screen=True,
+        before_render=force_full_redraw,
     )
     load()
     app.run()
