@@ -9,6 +9,7 @@ from pathlib import Path
 
 from textual import work
 from textual.app import App, ComposeResult
+from textual.coordinate import Coordinate
 from textual.widgets import DataTable, Footer, Header
 
 from proxycli import __version__
@@ -35,6 +36,7 @@ class ProxyTuiApp(App):
         self._config_path = config_path or default_config_path()
         self._outbounds: list[dict] = []
         self._tags: list[str] = []
+        self._tag_to_index: dict[str, int] = {}
         self._current_tag: str | None = None
         self._latency_results: dict[str, str] = {}
         self.title = f"proxycli {__version__}"
@@ -61,6 +63,7 @@ class ProxyTuiApp(App):
     def _refresh_data(self) -> None:
         config = self._read_config()
         self._tags = self._extract_node_tags(config)
+        self._tag_to_index = {tag: i for i, tag in enumerate(self._tags)}
         self._current_tag = self._extract_current_node(config)
 
         outbounds = config.get("outbounds", [])
@@ -190,11 +193,17 @@ class ProxyTuiApp(App):
 
     def _update_latency_cell(self, tag: str, label: str) -> None:
         self._latency_results[tag] = label
-        if tag not in self._tags:
+        row = self._tag_to_index.get(tag)
+        if row is None:
             return
 
         table = self.query_one(DataTable)
-        table.update_cell(tag, "Latency", label)
+        try:
+            if table.get_cell_at(Coordinate(row=row, column=1)) != tag:
+                return
+            table.update_cell_at(Coordinate(row=row, column=2), label)
+        except Exception:
+            return
 
     @staticmethod
     def _tcp_ping(host: str, port: int, timeout: float) -> float | None:
