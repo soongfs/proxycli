@@ -81,11 +81,6 @@ def tui(config_path: Path | None) -> None:
 
     app = ProxyTuiApp(config_path=config_path)
     app.run()
-    if app.needs_restart:
-        print(
-            "\n⚠  Config updated. Apply changes:\n"
-            "   sudo ~/.local/bin/proxycli daemon restart\n"
-        )
 
 
 @cli.group()

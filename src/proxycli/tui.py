@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import socket
 import time
 from pathlib import Path
@@ -31,20 +32,10 @@ class ProxyTuiApp(App):
         ("q", "quit", "Quit"),
     ]
 
-    def run(
-        self,
-        *,
-        headless: bool = False,
-        size: tuple[int, int] | None = None,
-    ) -> None:
-        """Prevent os._exit() so main.py can print after TUI exits."""
-        try:
-            super().run(headless=headless, size=size)
-        except SystemExit:
-            pass
-
     def __init__(self, config_path: Path | None = None):
         super().__init__()
+        self._real_os_exit = os._exit
+        os._exit = self._patched_exit  # type: ignore[method-assign]
         self._config_path = config_path or default_config_path()
         self._outbounds: list[dict] = []
         self._tags: list[str] = []
@@ -53,6 +44,16 @@ class ProxyTuiApp(App):
         self._latency_results: dict[str, str] = {}
         self.needs_restart: bool = False
         self.title = f"proxycli {__version__}"
+
+    def _patched_exit(self, code: int = 0) -> None:
+        os._exit = self._real_os_exit  # type: ignore[method-assign]
+        if self.needs_restart:
+            print(
+                "\n⚠  Config updated. Apply changes:\n"
+                "   sudo ~/.local/bin/proxycli daemon restart\n",
+                flush=True,
+            )
+        self._real_os_exit(code)
 
     def compose(self) -> ComposeResult:
         yield Header(show_clock=False)
