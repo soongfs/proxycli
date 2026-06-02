@@ -169,14 +169,12 @@ class ProxyTuiApp(App):
                 )
 
     def action_quit(self) -> None:
-        if self._needs_restart:
-            self.notify(
-                "Restart daemon to apply changes: "
-                "sudo ~/.local/bin/proxycli daemon restart",
-                severity="warning",
-                timeout=10,
-            )
         self.exit()
+        if self._needs_restart:
+            print(
+                "\n⚠  Config updated. Apply changes:\n"
+                "   sudo ~/.local/bin/proxycli daemon restart\n"
+            )
 
     def action_refresh(self) -> None:
         self._refresh_data()
