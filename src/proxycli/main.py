@@ -187,7 +187,7 @@ def _switch_node_via_config(config_path: Path, tag: str) -> str:
     if not daemon_module.status_daemon():
         return "config update; daemon is stopped, run sudo uv run proxycli daemon start"
 
-    daemon_module.reload_daemon()
+    daemon_module.reload_daemon(use_sudo=True)
     return "config reload"
 
 

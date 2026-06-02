@@ -154,7 +154,14 @@ class ProxyTuiApp(App):
         )
 
         if status_daemon():
-            reload_daemon()
+            try:
+                reload_daemon()
+            except PermissionError:
+                self.notify(
+                    "Config written. Restart daemon to apply: "
+                    "sudo ~/.local/bin/proxycli daemon restart",
+                    severity="warning",
+                )
 
     def action_refresh(self) -> None:
         self._refresh_data()
