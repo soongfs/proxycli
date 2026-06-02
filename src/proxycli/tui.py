@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import atexit
 import json
 import socket
 import time
@@ -130,6 +131,12 @@ class ProxyTuiApp(App):
             self._switch_node(tag)
             self._current_tag = tag
             self._needs_restart = True
+            atexit.register(
+                lambda: print(
+                    "\n⚠  Config updated. Apply changes:\n"
+                    "   sudo ~/.local/bin/proxycli daemon restart\n"
+                )
+            )
             self._refresh_data()
         except Exception as exc:
             self.notify(f"Error: {exc}", severity="error")
@@ -170,11 +177,6 @@ class ProxyTuiApp(App):
 
     def action_quit(self) -> None:
         self.exit()
-        if self._needs_restart:
-            print(
-                "\n⚠  Config updated. Apply changes:\n"
-                "   sudo ~/.local/bin/proxycli daemon restart\n"
-            )
 
     def action_refresh(self) -> None:
         self._refresh_data()
