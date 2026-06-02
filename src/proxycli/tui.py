@@ -17,12 +17,6 @@ from proxycli.config import default_config_path, read_config
 from proxycli.daemon import reload_daemon, status_daemon
 
 
-RESTART_HINT = (
-    "\n⚠  Config updated. Apply changes:\n"
-    "   sudo ~/.local/bin/proxycli daemon restart\n"
-)
-
-
 class ProxyTuiApp(App):
     """Interactive terminal UI for proxycli."""
 
@@ -36,6 +30,18 @@ class ProxyTuiApp(App):
         ("t", "test_latency", "Test"),
         ("q", "quit", "Quit"),
     ]
+
+    def run(
+        self,
+        *,
+        headless: bool = False,
+        size: tuple[int, int] | None = None,
+    ) -> None:
+        """Prevent os._exit() so main.py can print after TUI exits."""
+        try:
+            super().run(headless=headless, size=size)
+        except SystemExit:
+            pass
 
     def __init__(self, config_path: Path | None = None):
         super().__init__()
@@ -175,9 +181,6 @@ class ProxyTuiApp(App):
                 )
 
     def action_quit(self) -> None:
-        if self.needs_restart:
-            hint_path = self._config_path.parent / ".restart-hint"
-            hint_path.write_text(RESTART_HINT)
         self.exit()
 
     def action_refresh(self) -> None:
