@@ -1,6 +1,6 @@
 [project]
 name = "proxycli"
-version = "0.1.1"
+version = "0.2.0"
 description = "Manage a sing-box proxy on macOS via subscription imports and CLI controls."
 readme = "README.md"
 requires-python = ">=3.11"
