@@ -77,11 +77,9 @@ def cli(ctx: click.Context, config_path: Path, verbose: bool) -> None:
 )
 def tui(config_path: Path | None) -> None:
     """Launch the interactive terminal UI."""
-    from proxycli.tui import ProxyTuiApp
+    from proxycli.tui import run_node_selector
 
-    app = ProxyTuiApp(config_path=config_path)
-    app.run()
-    if app.needs_restart:
+    if run_node_selector(config_path=config_path):
         print(
             "\n⚠  Config updated. Apply changes:\n"
             "   sudo ~/.local/bin/proxycli daemon restart\n"

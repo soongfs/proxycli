@@ -1,221 +1,361 @@
-"""Textual TUI for proxycli — interactive node browsing and switching."""
+"""prompt_toolkit TUI for interactive node selection."""
 
 from __future__ import annotations
 
+import asyncio
 import json
 import socket
 import time
 from pathlib import Path
+from typing import Any
 
-from textual import work
-from textual.app import App, ComposeResult
-from textual.coordinate import Coordinate
-from textual.widgets import DataTable, Footer, Header
+from prompt_toolkit import Application
+from prompt_toolkit.formatted_text import FormattedText
+from prompt_toolkit.key_binding import KeyBindings
+from prompt_toolkit.keys import Keys
+from prompt_toolkit.layout import Layout, Window, FormattedTextControl
+from prompt_toolkit.layout.containers import HSplit
+from prompt_toolkit.styles import Style
+from wcwidth import wcswidth
 
-from proxycli import __version__
 from proxycli.config import default_config_path, read_config
 from proxycli.daemon import reload_daemon, status_daemon
 
+Node = dict[str, Any]
+Chunks = list[tuple[str, str]]
 
-class ProxyTuiApp(App):
-    """Interactive terminal UI for proxycli."""
 
-    CSS = ""
+def _str(value: Any) -> str:
+    return "" if value is None else str(value)
 
-    BINDINGS = [
-        ("j", "cursor_down", "Down"),
-        ("k", "cursor_up", "Up"),
-        ("enter", "select_node", "Switch"),
-        ("r", "refresh", "Refresh"),
-        ("t", "test_latency", "Test"),
-        ("q", "quit", "Quit"),
-    ]
 
-    def __init__(self, config_path: Path | None = None):
-        super().__init__()
-        self._config_path = config_path or default_config_path()
-        self._outbounds: list[dict] = []
-        self._tags: list[str] = []
-        self._tag_to_index: dict[str, int] = {}
-        self._current_tag: str | None = None
-        self._latency_results: dict[str, str] = {}
-        self.needs_restart: bool = False
-        self.title = f"proxycli {__version__}"
+def _display_width(text: str) -> int:
+    """Terminal display column width, handling CJK and emoji (2 wide each)."""
+    return wcswidth(text) or 0
 
-    def compose(self) -> ComposeResult:
-        yield Header(show_clock=False)
-        yield DataTable(cursor_type="row")
-        yield Footer()
 
-    def on_mount(self) -> None:
-        table = self.query_one(DataTable)
-        table.add_column("#", width=4)
-        table.add_column("Node", width=40)
-        table.add_column("Latency", width=10)
-        table.fixed_columns = 1
-        self._refresh_data()
+def _fit(value: Any, width: int) -> str:
+    """Fit text to exactly *width* terminal display columns, truncating with ~."""
+    text = _str(value).replace("\n", " ")
+    dw = _display_width(text)
+    if dw <= width:
+        return text + " " * (width - dw)
+    # Truncate character by character until display width fits width - 1 (+1 for ~)
+    result = ""
+    for ch in text:
+        if _display_width(result + ch) > width - 1:
+            break
+        result += ch
+    result += "~"
+    # Pad to exactly width columns
+    remaining = width - _display_width(result)
+    if remaining > 0:
+        result += " " * remaining
+    return result
 
-    def _read_config(self) -> dict:
-        try:
-            return read_config(self._config_path)
-        except Exception:
-            return {}
 
-    def _refresh_data(self) -> None:
-        config = self._read_config()
-        self._tags = self._extract_node_tags(config)
-        self._tag_to_index = {tag: i for i, tag in enumerate(self._tags)}
-        self._current_tag = self._extract_current_node(config)
+def _tag_cell(tag: str, active: bool) -> str:
+    """Format tag cell: active node gets ' *' suffix, total display width = 30."""
+    label = f"{tag} *" if active else tag
+    return _fit(label, 30)
 
-        outbounds = config.get("outbounds", [])
-        self._outbounds = [
-            o for o in outbounds
-            if o.get("tag") in self._tags
-            and o.get("server")
-            and o.get("server_port")
-        ]
 
-        table = self.query_one(DataTable)
-        table.clear()
-        for i, tag in enumerate(self._tags):
-            table.add_row(
-                str(i + 1),
-                tag,
-                self._latency_results.get(tag, ""),
-                key=tag,
-            )
+def _proxy_selector(config: dict[str, Any]) -> dict[str, Any] | None:
+    for outbound in config.get("outbounds", []):
+        if (
+            isinstance(outbound, dict)
+            and outbound.get("type") == "selector"
+            and outbound.get("tag") == "proxy"
+        ):
+            return outbound
+    return None
 
-        self._update_status()
 
-    def _extract_node_tags(self, config: dict) -> list[str]:
-        for ob in config.get("outbounds", []):
-            if ob.get("type") == "selector" and ob.get("tag") == "proxy":
-                return [str(t) for t in ob.get("outbounds", [])]
-        return []
+def _load_nodes(config_path: Path) -> tuple[list[Node], str, str]:
+    try:
+        config = read_config(config_path)
+    except FileNotFoundError:
+        return [], "", f"config file not found: {config_path}"
+    except Exception as exc:
+        return [], "", f"error reading config: {exc}"
 
-    def _extract_current_node(self, config: dict) -> str | None:
-        for ob in config.get("outbounds", []):
-            if ob.get("type") == "selector" and ob.get("tag") == "proxy":
-                return ob.get("default")
-        return None
+    selector = _proxy_selector(config)
+    if selector is None:
+        return [], "", "no proxy selector outbound found"
 
-    def _update_status(self) -> None:
-        daemon = "running" if status_daemon() else "stopped"
-        current = self._current_tag or "none"
-        self.sub_title = (
-            f"daemon: {daemon} | node: {current} | nodes: {len(self._tags)}"
+    outbounds = config.get("outbounds", [])
+    by_tag = {
+        str(outbound.get("tag")): outbound
+        for outbound in outbounds
+        if isinstance(outbound, dict) and outbound.get("tag")
+    }
+    nodes: list[Node] = []
+    for tag_value in selector.get("outbounds", []):
+        tag = str(tag_value)
+        outbound = by_tag.get(tag, {})
+        nodes.append(
+            {
+                "tag": tag,
+                "type": _str(outbound.get("type")),
+                "server": _str(outbound.get("server")),
+                "server_port": outbound.get("server_port"),
+            }
         )
+    return nodes, _str(selector.get("default")), "" if nodes else "no nodes in proxy selector"
 
-    def action_cursor_down(self) -> None:
-        table = self.query_one(DataTable)
-        table.action_cursor_down()
 
-    def action_cursor_up(self) -> None:
-        table = self.query_one(DataTable)
-        table.action_cursor_up()
+def _switch_node(config_path: Path, tag: str) -> str:
+    config = read_config(config_path)
+    selector = _proxy_selector(config)
+    if selector is None:
+        raise ValueError("no proxy selector outbound found")
+    if tag not in [str(value) for value in selector.get("outbounds", [])]:
+        raise ValueError(f"node not in proxy selector: {tag}")
 
-    def action_select_node(self) -> None:
-        table = self.query_one(DataTable)
-        if table.row_count == 0:
-            return
-
-        table.action_select_cursor()
-
-    def on_data_table_row_selected(self, event: DataTable.RowSelected) -> None:
-        tag = str(event.row_key.value)
-        if not tag or tag not in self._tags:
-            return
-
-        try:
-            self._switch_node(tag)
-            self._current_tag = tag
-            self.needs_restart = True
-            self._refresh_data()
-        except Exception as exc:
-            self.notify(f"Error: {exc}", severity="error")
-
-    def _switch_node(self, tag: str) -> None:
-        """Rewrite config to use the given node, then reload daemon."""
-        config = self._read_config()
-        found = False
-        for ob in config.get("outbounds", []):
-            if ob.get("type") == "selector" and ob.get("tag") == "proxy":
-                if tag not in ob.get("outbounds", []):
-                    raise ValueError(f"node {tag} not in selector")
-                ob["default"] = tag
-                found = True
-                break
-        if not found:
-            raise ValueError("no proxy selector in config")
-
-        config.setdefault("route", {})["final"] = tag
-        for server in config.get("dns", {}).get("servers", []):
-            if server.get("detour") == "proxy":
+    selector["default"] = tag
+    config.setdefault("route", {})["final"] = tag
+    dns = config.get("dns", {})
+    if isinstance(dns, dict):
+        for server in dns.get("servers", []):
+            if isinstance(server, dict) and server.get("detour") == "proxy":
                 server["detour"] = tag
 
-        self._config_path.write_text(
-            json.dumps(config, indent=2, ensure_ascii=False) + "\n",
-            encoding="utf-8",
+    config_path.write_text(
+        json.dumps(config, indent=2, ensure_ascii=False) + "\n",
+        encoding="utf-8",
+    )
+    if not status_daemon():
+        return f"switched to {tag}; daemon stopped"
+
+    try:
+        reload_daemon()
+    except PermissionError:
+        return f"switched to {tag}; reload needs permission"
+    except Exception as exc:
+        return f"switched to {tag}; reload failed: {exc}"
+    return f"switched to {tag}; daemon reloaded"
+
+
+def _tcp_ping(host: str, port: int, timeout: float = 3.0) -> float | None:
+    try:
+        start = time.monotonic()
+        with socket.create_connection((host, port), timeout=timeout):
+            return (time.monotonic() - start) * 1000
+    except (socket.timeout, ConnectionRefusedError, OSError):
+        return None
+
+
+def _daemon_status() -> str:
+    try:
+        return "running" if status_daemon() else "stopped"
+    except Exception:
+        return "unknown"
+
+
+def run_node_selector(config_path: Path | None = None) -> bool:
+    """Run the interactive selector. Return True when a node was switched."""
+    path = (config_path or default_config_path()).expanduser()
+    nodes: list[Node] = []
+    visible: list[int] = []
+    cursor = 0
+    filter_text = ""
+    needs_restart = False
+    current_tag = ""
+    message = ""
+    latency: dict[str, str] = {}
+
+    def highlighted_tag() -> str | None:
+        return str(nodes[visible[cursor]]["tag"]) if visible else None
+
+    def rebuild_visible(preferred: str | None = None) -> None:
+        nonlocal visible, cursor
+        selected = preferred or highlighted_tag()
+        needle = filter_text.casefold()
+        visible = [i for i, node in enumerate(nodes) if needle in str(node["tag"]).casefold()]
+        if not visible:
+            cursor = 0
+            return
+        if selected:
+            for pos, index in enumerate(visible):
+                if str(nodes[index]["tag"]) == selected:
+                    cursor = pos
+                    return
+        cursor = min(cursor, len(visible) - 1)
+
+    def load(preferred: str | None = None) -> None:
+        nonlocal nodes, current_tag, message
+        nodes, current_tag, message = _load_nodes(path)
+        rebuild_visible(preferred)
+
+    def selected_node() -> Node | None:
+        return nodes[visible[cursor]] if visible else None
+
+    def move(delta: int) -> None:
+        nonlocal cursor
+        if visible:
+            cursor = (cursor + delta) % len(visible)
+            app.invalidate()
+
+    def body_rows() -> int:
+        try:
+            return max(1, app.output.get_size().rows - 3)
+        except Exception:
+            return 20
+
+    def address(node: Node) -> str:
+        server = _str(node.get("server"))
+        port = _str(node.get("server_port"))
+        return f"{server}:{port}" if server and port else server or port
+
+    def render_header() -> FormattedText:
+        current = current_tag or "none"
+        return FormattedText(
+            [("class:header", f" daemon: {_daemon_status()} | current: {current} | nodes: {len(nodes)}")]
         )
 
-        if status_daemon():
-            try:
-                reload_daemon()
-            except PermissionError:
-                self.notify(
-                    "Config written. Restart daemon to apply: "
-                    "sudo ~/.local/bin/proxycli daemon restart",
-                    severity="warning",
+    def render_body() -> FormattedText:
+        parts: Chunks = [
+            ("class:table.header", f"  {'#':>3}  {'Tag':30} {'Type':8} {'Address:Port':30} {'Latency':8}\n")
+        ]
+        if message and not nodes:
+            parts.append(("", f"  {message}\n"))
+            return FormattedText(parts)
+        if not nodes:
+            parts.append(("", "  no nodes loaded\n"))
+            return FormattedText(parts)
+        if not visible:
+            parts.append(("", "  no matching nodes\n"))
+            return FormattedText(parts)
+
+        data_rows = max(1, body_rows() - 1)
+        start = max(0, cursor - data_rows + 1)
+        for pos, index in enumerate(visible[start : start + data_rows], start=start):
+            node = nodes[index]
+            tag = str(node["tag"])
+            prefix = ">" if pos == cursor else " "
+            parts.append(
+                (
+                    "",
+                    f"{prefix}{index + 1:>3}  {_tag_cell(tag, tag == current_tag)} "
+                    f"{_fit(node.get('type'), 8)} {_fit(address(node), 30)} "
+                    f"{_fit(latency.get(tag, ''), 8)}\n",
                 )
+            )
+        return FormattedText(parts)
 
-    def action_quit(self) -> None:
-        self.exit()
+    def render_footer() -> FormattedText:
+        current_filter = filter_text if filter_text else "<none>"
+        notice = f"{message} | " if message and nodes else ""
+        hints = "j/down k/up enter switch t test esc clear q quit"
+        return FormattedText([("class:footer", f" {notice}filter: {current_filter} | {hints}")])
 
-    def action_refresh(self) -> None:
-        self._refresh_data()
-        self.notify("Refreshed")
+    async def ping_task(tag: str, server: str, port: int) -> None:
+        result = await asyncio.to_thread(_tcp_ping, server, port, 3.0)
+        latency[tag] = f"{result:.0f}ms" if result is not None else "timeout"
+        app.invalidate()
 
-    @work(thread=True)
-    def action_test_latency(self) -> None:
-        for node in list(self._outbounds):
-            tag = str(node.get("tag", ""))
-            if not tag:
-                continue
-
-            try:
-                latency = self._tcp_ping(
-                    str(node["server"]),
-                    int(node["server_port"]),
-                    timeout=3.0,
-                )
-                label = f"{latency:.0f}ms" if latency is not None else "timeout"
-            except Exception:
-                label = "err"
-
-            self.call_from_thread(self._update_latency_cell, tag, label)
-
-        self.call_from_thread(self.notify, "Latency test complete")
-
-    def _update_latency_cell(self, tag: str, label: str) -> None:
-        self._latency_results[tag] = label
-        row = self._tag_to_index.get(tag)
-        if row is None:
+    def switch_selected() -> None:
+        nonlocal needs_restart, current_tag, message
+        node = selected_node()
+        if node is None:
             return
-
-        table = self.query_one(DataTable)
+        tag = str(node["tag"])
         try:
-            if table.get_cell_at(Coordinate(row=row, column=1)) != tag:
-                return
-            table.update_cell_at(Coordinate(row=row, column=2), label)
-        except Exception:
+            switch_message = _switch_node(path, tag)
+        except Exception as exc:
+            message = f"error: {exc}"
+        else:
+            needs_restart = True
+            current_tag = tag
+            load(preferred=tag)
+            message = switch_message
+        app.invalidate()
+
+    def test_selected() -> None:
+        nonlocal message
+        node = selected_node()
+        if node is None:
             return
-
-    @staticmethod
-    def _tcp_ping(host: str, port: int, timeout: float) -> float | None:
+        tag = str(node["tag"])
+        server = _str(node.get("server"))
         try:
-            start = time.monotonic()
-            with socket.create_connection((host, port), timeout=timeout):
-                elapsed = (time.monotonic() - start) * 1000
-            return elapsed
-        except (socket.timeout, ConnectionRefusedError, OSError):
-            return None
+            port = int(node.get("server_port"))
+        except (TypeError, ValueError):
+            latency[tag] = "n/a"
+            message = f"missing server port for {tag}"
+            app.invalidate()
+            return
+        if not server:
+            latency[tag] = "n/a"
+            message = f"missing server for {tag}"
+            app.invalidate()
+            return
+        latency[tag] = "..."
+        app.invalidate()
+        app.create_background_task(ping_task(tag, server, port))
+
+    kb = KeyBindings()
+
+    @kb.add("j")
+    @kb.add("down")
+    def _(event: Any) -> None:
+        move(1)
+
+    @kb.add("k")
+    @kb.add("up")
+    def _(event: Any) -> None:
+        move(-1)
+
+    @kb.add("enter")
+    def _(event: Any) -> None:
+        switch_selected()
+
+    @kb.add("t")
+    def _(event: Any) -> None:
+        test_selected()
+
+    @kb.add("q")
+    def _(event: Any) -> None:
+        event.app.exit()
+
+    @kb.add("backspace")
+    @kb.add("c-h")
+    def _(event: Any) -> None:
+        nonlocal filter_text
+        if filter_text:
+            filter_text = filter_text[:-1]
+            rebuild_visible()
+            app.invalidate()
+
+    @kb.add("escape")
+    def _(event: Any) -> None:
+        nonlocal filter_text
+        if filter_text:
+            filter_text = ""
+            rebuild_visible()
+            app.invalidate()
+
+    @kb.add(Keys.Any)
+    def _(event: Any) -> None:
+        nonlocal filter_text
+        if event.data and event.data.isprintable():
+            filter_text += event.data
+            rebuild_visible()
+            app.invalidate()
+
+    root = HSplit(
+        [
+            Window(FormattedTextControl(render_header), height=1),
+            Window(FormattedTextControl(render_body), wrap_lines=False),
+            Window(FormattedTextControl(render_footer), height=1),
+        ]
+    )
+    app: Application = Application(
+        layout=Layout(root),
+        key_bindings=kb,
+        style=Style.from_dict({"header": "bold", "footer": "fg:#888888", "table.header": "bold"}),
+        full_screen=True,
+    )
+    load()
+    app.run()
+    return needs_restart
