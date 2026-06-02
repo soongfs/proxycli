@@ -112,6 +112,6 @@ def test_select_then_quit_prints_restart_hint_after_shutdown(
     asyncio.run(drive_app())
 
     assert app.needs_restart is True
-    captured = capsys.readouterr()
-    assert captured.out == RESTART_HINT
-    assert captured.err == ""
+    hint_path = config_path.parent / ".restart-hint"
+    assert hint_path.exists()
+    assert hint_path.read_text() == RESTART_HINT

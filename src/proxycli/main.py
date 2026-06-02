@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import atexit
 import json
 import logging
+import signal
 import socket
 import subprocess
 import time
@@ -78,6 +80,16 @@ def cli(ctx: click.Context, config_path: Path, verbose: bool) -> None:
 def tui(config_path: Path | None) -> None:
     """Launch the interactive terminal UI."""
     from proxycli.tui import ProxyTuiApp
+
+    hint_path = (config_path or config_module.default_config_path()).parent / ".restart-hint"
+
+    def _show_hint() -> None:
+        if hint_path.exists():
+            print(hint_path.read_text(encoding="utf-8"), end="", flush=True)
+            hint_path.unlink()
+
+    atexit.register(_show_hint)
+    signal.signal(signal.SIGTERM, lambda *_: _show_hint() or exit(0))
 
     app = ProxyTuiApp(config_path=config_path)
     app.run()
