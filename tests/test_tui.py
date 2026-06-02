@@ -69,6 +69,7 @@ def test_select_then_quit_prints_restart_hint_after_shutdown(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     from proxycli import tui as tui_module
+    from proxycli.tui import RESTART_HINT
 
     config_path = tmp_path / "config.json"
     config_path.write_text(
@@ -111,3 +112,6 @@ def test_select_then_quit_prints_restart_hint_after_shutdown(
     asyncio.run(drive_app())
 
     assert app.needs_restart is True
+    captured = capsys.readouterr()
+    assert captured.out == RESTART_HINT
+    assert captured.err == ""

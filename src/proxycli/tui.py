@@ -46,6 +46,7 @@ class ProxyTuiApp(App):
         self._current_tag: str | None = None
         self._latency_results: dict[str, str] = {}
         self.needs_restart: bool = False
+        self._restart_hint_printed: bool = False
         self.title = f"proxycli {__version__}"
 
     def compose(self) -> ComposeResult:
@@ -175,10 +176,12 @@ class ProxyTuiApp(App):
                 )
 
     def action_quit(self) -> None:
-        if self.needs_restart:
-            hint_path = self._config_path.parent / ".restart-hint"
-            hint_path.write_text(RESTART_HINT)
         self.exit()
+
+    def on_unmount(self) -> None:
+        if self.needs_restart and not self._restart_hint_printed:
+            print(RESTART_HINT, end="", flush=True)
+            self._restart_hint_printed = True
 
     def action_refresh(self) -> None:
         self._refresh_data()

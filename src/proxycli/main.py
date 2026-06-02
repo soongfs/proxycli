@@ -78,16 +78,9 @@ def cli(ctx: click.Context, config_path: Path, verbose: bool) -> None:
 def tui(config_path: Path | None) -> None:
     """Launch the interactive terminal UI."""
     from proxycli.tui import ProxyTuiApp
+
     app = ProxyTuiApp(config_path=config_path)
-    try:
-        app.run()
-    except SystemExit:
-        pass
-    finally:
-        hint_path = app._config_path.parent / ".restart-hint"
-        if hint_path.exists():
-            print(hint_path.read_text(encoding="utf-8"), end="")
-            hint_path.unlink()
+    app.run()
 
 
 @cli.group()
