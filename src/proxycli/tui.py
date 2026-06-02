@@ -207,47 +207,71 @@ def run_node_selector(config_path: Path | None = None) -> bool:
         port = _str(node.get("server_port"))
         return f"{server}:{port}" if server and port else server or port
 
+    def terminal_width() -> int:
+        try:
+            return app.output.get_size().columns
+        except Exception:
+            return 120
+
+    def _pad_line(line: str) -> str:
+        """Pad line with trailing spaces to full terminal width.
+
+        Essential for CJK/emoji: prompt_toolkit's incremental renderer tracks
+        cells by Python char index, which breaks when a 2-cell char (emoji/CJK)
+        is replaced by a 1-cell char (ASCII). Padding every line to terminal
+        width forces a full cell overwrite, preventing residue artifacts.
+        """
+        content = line.rstrip("\n")
+        tw = terminal_width()
+        dw = _display_width(content)
+        if dw < tw:
+            return content + " " * (tw - dw) + "\n"
+        return line
+
     def render_header() -> FormattedText:
         current = current_tag or "none"
         return FormattedText(
-            [("class:header", f" daemon: {_daemon_status()} | current: {current} | nodes: {len(nodes)}")]
+            [("class:header", _pad_line(f" daemon: {_daemon_status()} | current: {current} | nodes: {len(nodes)}"))]
         )
 
     def render_body() -> FormattedText:
         parts: Chunks = [
-            ("class:table.header", f"  {'#':>3}  {'Tag':30} {'Type':8} {'Address:Port':30} {'Latency':8}\n")
+            ("class:table.header", _pad_line(f"  {'#':>3}  {'Tag':30} {'Type':8} {'Address:Port':30} {'Latency':8}"))
         ]
         if message and not nodes:
-            parts.append(("", f"  {message}\n"))
+            parts.append(("", _pad_line(f"  {message}")))
             return FormattedText(parts)
         if not nodes:
-            parts.append(("", "  no nodes loaded\n"))
+            parts.append(("", _pad_line("  no nodes loaded")))
             return FormattedText(parts)
         if not visible:
-            parts.append(("", "  no matching nodes\n"))
+            parts.append(("", _pad_line("  no matching nodes")))
             return FormattedText(parts)
 
-        data_rows = max(1, body_rows() - 1)
+        max_lines = body_rows()
+        data_rows = max(1, max_lines - 1)
         start = max(0, cursor - data_rows + 1)
         for pos, index in enumerate(visible[start : start + data_rows], start=start):
             node = nodes[index]
             tag = str(node["tag"])
             prefix = ">" if pos == cursor else " "
-            parts.append(
-                (
-                    "",
-                    f"{prefix}{index + 1:>3}  {_tag_cell(tag, tag == current_tag)} "
-                    f"{_fit(node.get('type'), 8)} {_fit(address(node), 30)} "
-                    f"{_fit(latency.get(tag, ''), 8)}\n",
-                )
+            line = (
+                f"{prefix}{index + 1:>3}  {_tag_cell(tag, tag == current_tag)} "
+                f"{_fit(node.get('type'), 8)} {_fit(address(node), 30)} "
+                f"{_fit(latency.get(tag, ''), 8)}"
             )
+            parts.append(("", _pad_line(line)))
+        # Fill remaining rows with blank lines to prevent residue
+        rendered = max(0, min(len(visible), start + data_rows) - start)
+        for _ in range(data_rows - rendered):
+            parts.append(("", _pad_line("")))
         return FormattedText(parts)
 
     def render_footer() -> FormattedText:
         current_filter = filter_text if filter_text else "<none>"
         notice = f"{message} | " if message and nodes else ""
         hints = "j/down k/up enter switch t test esc clear q quit"
-        return FormattedText([("class:footer", f" {notice}filter: {current_filter} | {hints}")])
+        return FormattedText([("class:footer", _pad_line(f" {notice}filter: {current_filter} | {hints}"))])
 
     async def ping_task(tag: str, server: str, port: int) -> None:
         result = await asyncio.to_thread(_tcp_ping, server, port, 3.0)
