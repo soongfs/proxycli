@@ -3,24 +3,31 @@
 # The DNS queries will be hijacked by sing-box's hijack-dns rule
 # and resolved via the proxy (fakeip + remote_dns chain).
 #
-# This works for 8.8.8.8, 1.1.1.1, or any public DNS IP.
-# The actual DNS resolution is done by sing-box, not the upstream.
+# Usage: sudo scripts/dns-proxy.sh [DNS_IP]
+#   Default DNS_IP: 8.8.8.8 (also works with 1.1.1.1, etc.)
 #
 # Safety: run this AFTER sing-box daemon is started.
-# If sing-box is stopped, DNS will fail — revert with dns-revert.sh.
+# Revert with: sudo scripts/dns-revert.sh
 
 set -euo pipefail
 
 DNS_IP="${1:-8.8.8.8}"
 
-# Detect network service
-SERVICE=$(networksetup -listallnetworkservices | grep -v 'An asterisk' | head -1)
+# Detect active interface (en0, en1, etc.)
+IFACE=$(route get default 2>/dev/null | awk '/interface:/{print $2}')
+# Map interface name to service name
+SERVICE=$(networksetup -listallhardwareports | awk -v iface="$IFACE" '
+    /Hardware Port:/{port=$0; gsub("Hardware Port: ","",port)}
+    /Device:/{dev=$2; if(dev==iface) print port}
+')
+
 if [ -z "$SERVICE" ]; then
-    echo "ERROR: No network service found"
+    echo "ERROR: No active network service found"
     exit 1
 fi
 
-echo "Setting DNS on '$SERVICE' to $DNS_IP..."
+echo "Active interface: $IFACE -> $SERVICE"
+echo "Setting DNS to $DNS_IP..."
 sudo networksetup -setdnsservers "$SERVICE" "$DNS_IP"
 
 # Flush DNS cache

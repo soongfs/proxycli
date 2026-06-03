@@ -5,6 +5,11 @@
   "dns": {
     "servers": [
       {
+        "type": "fakeip",
+        "tag": "fakeip",
+        "inet4_range": "198.18.0.0/15"
+      },
+      {
         "type": "udp",
         "tag": "local_local",
         "server": "119.29.29.29"
@@ -44,6 +49,10 @@
       {
         "server": "direct_dns",
         "rule_set": "geosite-cn"
+      },
+      {
+        "server": "fakeip",
+        "query_type": ["A", "AAAA"]
       },
       {
         "server": "remote_dns",
@@ -110,6 +119,11 @@
     ],
     "rules": [
       {
+        "action": "sniff"
+      },
+      {
+        "inbound": ["tun-in"],
+        "ip_cidr": ["198.18.0.0/15"],
         "action": "sniff"
       },
       {

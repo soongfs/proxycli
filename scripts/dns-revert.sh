@@ -4,16 +4,21 @@
 
 set -euo pipefail
 
-SERVICE=$(networksetup -listallnetworkservices | grep -v 'An asterisk' | head -1)
+IFACE=$(route get default 2>/dev/null | awk '/interface:/{print $2}')
+SERVICE=$(networksetup -listallhardwareports | awk -v iface="$IFACE" '
+    /Hardware Port:/{port=$0; gsub("Hardware Port: ","",port)}
+    /Device:/{dev=$2; if(dev==iface) print port}
+')
+
 if [ -z "$SERVICE" ]; then
-    echo "ERROR: No network service found"
+    echo "ERROR: No active network service found"
     exit 1
 fi
 
-echo "Reverting DNS on '$SERVICE' to automatic..."
+echo "Active interface: $IFACE -> $SERVICE"
+echo "Reverting DNS to automatic..."
 sudo networksetup -setdnsservers "$SERVICE" Empty
 
-# Flush DNS cache
 sudo dscacheutil -flushcache
 sudo killall -HUP mDNSResponder 2>/dev/null || true
 
