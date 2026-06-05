@@ -72,6 +72,14 @@ def _proxy_selector(config: dict[str, Any]) -> dict[str, Any] | None:
     return None
 
 
+def _effective_node(config: dict[str, Any], selector: dict[str, Any]) -> str:
+    tags = {str(value) for value in selector.get("outbounds", [])}
+    route = config.get("route", {})
+    if isinstance(route, dict) and route.get("final") in tags:
+        return str(route["final"])
+    return _str(selector.get("default"))
+
+
 def _load_nodes(config_path: Path) -> tuple[list[Node], str, str]:
     try:
         config = read_config(config_path)
@@ -102,7 +110,7 @@ def _load_nodes(config_path: Path) -> tuple[list[Node], str, str]:
                 "server_port": outbound.get("server_port"),
             }
         )
-    return nodes, _str(selector.get("default")), "" if nodes else "no nodes in proxy selector"
+    return nodes, _effective_node(config, selector), "" if nodes else "no nodes in proxy selector"
 
 
 def _switch_node(config_path: Path, tag: str) -> str:

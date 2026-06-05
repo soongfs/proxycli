@@ -70,10 +70,7 @@ def test_start_daemon_writes_pid_and_uses_config(
     assert created["process"].stderr == subprocess.STDOUT
     assert created["process"].start_new_session is True
     assert created["process"].env["ENABLE_DEPRECATED_LEGACY_DNS_SERVERS"] == "true"
-    assert (
-        created["process"].env["ENABLE_DEPRECATED_LEGACY_DNS_FAKEIP_OPTIONS"]
-        == "true"
-    )
+    assert "ENABLE_DEPRECATED_LEGACY_DNS_FAKEIP_OPTIONS" not in created["process"].env
 
 
 def test_start_daemon_rejects_existing_running_pid(
@@ -84,6 +81,7 @@ def test_start_daemon_rejects_existing_running_pid(
     pid_path.write_text("123\n", encoding="utf-8")
     monkeypatch.setattr(daemon, "PID_PATH", pid_path)
     monkeypatch.setattr(daemon, "_is_running", lambda pid: True)
+    monkeypatch.setattr(daemon, "_is_sing_box_process", lambda pid: True)
 
     with pytest.raises(RuntimeError, match="already running"):
         daemon.start_daemon(tmp_path / "config.json")
@@ -103,6 +101,7 @@ def test_stop_daemon_sends_sigterm_and_removes_pid(
     monkeypatch.setattr(daemon, "PID_PATH", pid_path)
     monkeypatch.setattr(daemon.os, "kill", fake_kill)
     monkeypatch.setattr(daemon, "_is_running", lambda pid: False)
+    monkeypatch.setattr(daemon, "_is_sing_box_process", lambda pid: True)
 
     daemon.stop_daemon()
 
@@ -118,6 +117,7 @@ def test_status_daemon(
     pid_path.write_text("123\n", encoding="utf-8")
     monkeypatch.setattr(daemon, "PID_PATH", pid_path)
     monkeypatch.setattr(daemon, "_is_running", lambda pid: pid == 123)
+    monkeypatch.setattr(daemon, "_is_sing_box_process", lambda pid: True)
 
     assert daemon.status_daemon() is True
 
@@ -219,3 +219,44 @@ def test_start_daemon_fails_when_log_contains_error(
 
     assert not pid_path.exists()
     assert created["process"].killed is False
+
+
+def test_status_daemon_removes_stale_non_sing_box_pid(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    pid_path = tmp_path / "daemon.pid"
+    pid_path.write_text("123\n", encoding="utf-8")
+    monkeypatch.setattr(daemon, "PID_PATH", pid_path)
+    monkeypatch.setattr(daemon, "_is_running", lambda pid: True)
+    monkeypatch.setattr(daemon, "_is_sing_box_process", lambda pid: False)
+
+    assert daemon.status_daemon() is False
+    assert not pid_path.exists()
+
+
+def test_stop_daemon_escalates_to_sigkill_before_removing_pid(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    pid_path = tmp_path / "daemon.pid"
+    pid_path.write_text("123\n", encoding="utf-8")
+    calls: list[tuple[int, int]] = []
+    alive = {"value": True}
+
+    def fake_kill(pid: int, sig: int) -> None:
+        calls.append((pid, sig))
+        if sig == daemon.signal.SIGKILL:
+            alive["value"] = False
+
+    monkeypatch.setattr(daemon, "PID_PATH", pid_path)
+    monkeypatch.setattr(daemon.os, "kill", fake_kill)
+    monkeypatch.setattr(daemon, "_is_running", lambda pid: alive["value"])
+    monkeypatch.setattr(daemon, "_is_sing_box_process", lambda pid: True)
+    monkeypatch.setattr(daemon.time, "sleep", lambda seconds: None)
+
+    daemon.stop_daemon()
+
+    assert calls[0] == (123, daemon.signal.SIGTERM)
+    assert (123, daemon.signal.SIGKILL) in calls
+    assert not pid_path.exists()

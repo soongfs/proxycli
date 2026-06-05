@@ -1,8 +1,19 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
-from proxycli.config import generate_config, load_template, read_config
+import pytest
+
+from proxycli import config as config_module
+from proxycli.config import (
+    add_direct_domain,
+    generate_config,
+    load_direct_domains,
+    load_template,
+    read_config,
+    remove_direct_domain,
+)
 
 
 def sample_nodes() -> list[dict[str, object]]:
@@ -112,3 +123,23 @@ def test_generated_config_routes_private_networks_direct(tmp_path: Path) -> None
     assert "169.254.0.0/16" in direct_ip_cidrs
     assert "fc00::/7" in direct_ip_cidrs
     assert "fe80::/10" in direct_ip_cidrs
+
+
+def test_direct_domain_inputs_are_normalized_and_deduplicated(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    direct_path = tmp_path / "direct-domains.json"
+    direct_path.write_text(json.dumps(["example.com"]), encoding="utf-8")
+    monkeypatch.setattr(config_module, "direct_domains_path", lambda: direct_path)
+
+    assert add_direct_domain(" HTTPS://API.EXAMPLE.COM/path ") is True
+    assert add_direct_domain("api.example.com") is False
+    assert load_direct_domains() == ["api.example.com", "example.com"]
+    assert remove_direct_domain("https://api.example.com/foo") is True
+    assert load_direct_domains() == ["example.com"]
+
+
+def test_direct_domain_rejects_invalid_input() -> None:
+    with pytest.raises(ValueError, match="invalid domain suffix"):
+        add_direct_domain("example.com/path")

@@ -18,7 +18,7 @@ valid even when tags or node fields contain quotes or non-ASCII text.
 Generated configs include:
 
 - log level `info`
-- DNS servers for local DNS, remote TLS DNS, and fakeip
+- DNS servers for local DNS, remote HTTPS DNS, hosts bootstrap, and DNS hijack
 - TUN inbound with `auto_route`, `auto_redirect`, `strict_route`, and
   `stack: system`
 - mixed HTTP/SOCKS inbound on `127.0.0.1:7890`

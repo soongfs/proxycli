@@ -5,9 +5,11 @@ from __future__ import annotations
 import base64
 import json
 import logging
+import os
 import time
 from pathlib import Path
 from typing import Any
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 import httpx
 
@@ -53,10 +55,26 @@ def _read_state(path: Path | None = None) -> dict[str, Any]:
 
 
 def _write_state(state: dict[str, Any], path: Path | None = None) -> None:
-    """Write CLI state to disk."""
+    """Write CLI state to disk with owner-only permissions."""
     expanded = (path or STATE_PATH).expanduser()
     expanded.parent.mkdir(parents=True, exist_ok=True)
     expanded.write_text(json.dumps(state, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    os.chmod(expanded, 0o600)
+
+
+def mask_url(url: str) -> str:
+    """Mask common secret-bearing subscription URL query parameters for display."""
+    split = urlsplit(url)
+    if not split.query:
+        return url
+    masked_params = []
+    for key, value in parse_qsl(split.query, keep_blank_values=True):
+        if key.lower() in {"token", "key", "api_key", "apikey", "secret", "password", "passwd"}:
+            value = "***"
+        elif len(value) > 24:
+            value = f"{value[:6]}...{value[-4:]}"
+        masked_params.append((key, value))
+    return urlunsplit((split.scheme, split.netloc, split.path, urlencode(masked_params), split.fragment))
 
 
 def fetch_subscription(url: str, proxy: str | None = None) -> str:
@@ -110,6 +128,20 @@ def update_config(
     _write_state(state)
 
 
+def _ensure_rule_sets(results: dict[str, bool]) -> None:
+    """Raise if a rule-set download failed and no usable local file exists."""
+    missing = []
+    rd = rule_set_dir()
+    for tag, ok in results.items():
+        if ok:
+            continue
+        path = rd / f"{tag}.srs"
+        if not path.exists():
+            missing.append(tag)
+    if missing:
+        raise RuntimeError(f"failed to download required rule-set files: {', '.join(missing)}")
+
+
 def update_from_url(
     url: str,
     output_path: Path | None = None,
@@ -126,7 +158,7 @@ def update_from_url(
     if not nodes:
         raise ValueError("subscription did not contain any supported nodes")
 
-    download_rule_sets(proxy=proxy)
+    _ensure_rule_sets(download_rule_sets(proxy=proxy))
     generate_config(nodes, output_path)
     state = _read_state()
     state.update({"subscription_url": url, "last_fetch_at": int(time.time())})
@@ -165,7 +197,7 @@ def download_rule_sets(proxy: str | None = None) -> dict[str, bool]:
                 results[tag] = True
             except httpx.HTTPError as exc:
                 logger.warning("Failed to download rule-set %s: %s", tag, exc)
-                results[tag] = False
+                results[tag] = dest.exists()
 
     return results
 

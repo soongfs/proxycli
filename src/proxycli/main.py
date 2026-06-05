@@ -122,7 +122,8 @@ def sub_show() -> None:
 
     table = Table("Key", "Value")
     for key, value in state.items():
-        table.add_row(str(key), str(value))
+        display_value = subscription_module.mask_url(str(value)) if key == "subscription_url" else str(value)
+        table.add_row(str(key), display_value)
     console.print(table)
 
 
@@ -140,11 +141,28 @@ def _node_tags(config_data: dict[str, Any]) -> list[str]:
 
 
 def _get_selector_default(config_data: dict[str, Any]) -> str | None:
-    """Return the current default tag of the proxy selector outbound."""
+    """Return the configured default tag of the proxy selector outbound."""
     for outbound in config_data.get("outbounds", []):
         if outbound.get("type") == "selector" and outbound.get("tag") == "proxy":
-            return outbound.get("default")
+            default = outbound.get("default")
+            return str(default) if default else None
     return None
+
+
+def _get_effective_node(config_data: dict[str, Any]) -> str | None:
+    """Return the node tag that generated traffic actually uses.
+
+    proxycli's fallback switch path pins route.final to the selected node so
+    sing-box reloads apply immediately. Prefer that concrete route target when
+    it is one of the selector choices; otherwise fall back to selector.default.
+    """
+    tags = set(_node_tags(config_data))
+    route = config_data.get("route", {})
+    if isinstance(route, dict):
+        final = route.get("final")
+        if final in tags:
+            return str(final)
+    return _get_selector_default(config_data)
 
 
 def _switch_node_via_config(config_path: Path, tag: str) -> str:
@@ -217,7 +235,7 @@ def node_list(ctx: click.Context) -> None:
         raise click.ClickException(str(exc)) from exc
 
     tags = _node_tags(config_data)
-    current = _get_selector_default(config_data)
+    current = _get_effective_node(config_data)
     table = Table("#", "Node", "Status")
     for idx, tag in enumerate(tags, start=1):
         status = "[green]● active[/green]" if tag == current else ""
@@ -271,14 +289,16 @@ def node_use(ctx: click.Context, tag_or_index: str) -> None:
 
 
 @node.command("current")
-def node_current() -> None:
+@click.pass_context
+def node_current(ctx: click.Context) -> None:
     """Show the current active proxy node."""
+    proxy_ctx = _ctx(ctx)
     try:
-        config_data = config_module.read_config()
+        config_data = config_module.read_config(proxy_ctx.config_path)
     except Exception as exc:
         raise click.ClickException(str(exc)) from exc
 
-    current = _get_selector_default(config_data)
+    current = _get_effective_node(config_data)
     if current:
         console.print(f"Current node: {current}")
     else:
@@ -310,19 +330,20 @@ def node_test(ctx: click.Context, timeout: float, top: int) -> None:
         console.print("No testable nodes found in config.")
         return
 
-    results: list[tuple[str, float | None]] = []
+    results: list[tuple[int, str, float | None]] = []
     with console.status("Testing node latency..."):
-        for node in nodes:
+        for idx, node in enumerate(nodes, start=1):
             latency = _tcp_ping(
                 str(node["server"]), int(node["server_port"]), timeout,
             )
-            results.append((str(node["tag"]), latency))
+            results.append((idx, str(node["tag"]), latency))
 
+    results.sort(key=lambda item: item[2] if item[2] is not None else float("inf"))
     if top > 0:
         results = results[:top]
 
     table = Table("#", "Node", "Latency")
-    for idx, (tag, latency) in enumerate(results, start=1):
+    for idx, tag, latency in results:
         if latency is None:
             table.add_row(str(idx), tag, "[red]timeout[/red]")
         elif latency < 200:
@@ -412,6 +433,10 @@ def config_generate(ctx: click.Context, input_file: Path) -> None:
     nodes = subscription_module.parse_subscription(raw_text)
     if not nodes:
         raise click.ClickException("input file did not contain any supported nodes")
+    try:
+        subscription_module.download_rule_sets()
+    except Exception as exc:
+        raise click.ClickException(str(exc)) from exc
     config_module.generate_config(nodes, proxy_ctx.config_path)
     console.print(f"Wrote {proxy_ctx.config_path} with {len(nodes)} nodes")
 

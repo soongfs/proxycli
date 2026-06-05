@@ -8,6 +8,7 @@ import platform
 import sys
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
 
 from jinja2 import Environment, FileSystemLoader, Template, select_autoescape
 
@@ -136,21 +137,36 @@ def save_direct_domains(domains: list[str]) -> None:
     )
 
 
+def normalize_direct_domain(domain: str) -> str:
+    """Normalize a user-supplied direct-routing domain suffix."""
+    value = domain.strip().lower()
+    if "://" in value:
+        parsed = urlsplit(value)
+        value = parsed.hostname or ""
+    value = value.strip().strip("/")
+    if not value or "/" in value or " " in value:
+        raise ValueError(f"invalid domain suffix: {domain}")
+    return value
+
+
 def add_direct_domain(domain: str) -> bool:
     """Add a domain suffix to the direct list. Returns True if new."""
+    normalized = normalize_direct_domain(domain)
     domains = load_direct_domains()
-    if domain in domains:
+    normalized_domains = [normalize_direct_domain(d) for d in domains]
+    if normalized in normalized_domains:
         return False
-    domains.append(domain)
-    save_direct_domains(domains)
+    domains.append(normalized)
+    save_direct_domains(sorted(set(normalize_direct_domain(d) for d in domains)))
     return True
 
 
 def remove_direct_domain(domain: str) -> bool:
     """Remove a domain suffix from the direct list. Returns True if found."""
+    normalized = normalize_direct_domain(domain)
     domains = load_direct_domains()
-    if domain not in domains:
+    remaining = [d for d in domains if normalize_direct_domain(d) != normalized]
+    if len(remaining) == len(domains):
         return False
-    domains.remove(domain)
-    save_direct_domains(domains)
+    save_direct_domains(remaining)
     return True

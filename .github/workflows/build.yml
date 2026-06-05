@@ -24,16 +24,22 @@ jobs:
 
       - name: Install dependencies
         run: |
+          python -m pip install --upgrade pip
           pip install pyinstaller
-          pip install click httpx jinja2 rich
+          pip install .
 
       - name: Build binary
         run: |
           pyinstaller --onefile --name proxycli \
-            --add-data "src/proxycli/templates:proxycli/templates" \
+            --collect-all proxycli \
             src/proxycli/main.py
         env:
           PYTHONPATH: ${{ github.workspace }}/src
+
+      - name: Smoke test binary
+        run: |
+          dist/proxycli --help >/dev/null
+          dist/proxycli --version
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4

@@ -5,54 +5,101 @@
   "dns": {
     "servers": [
       {
-        "tag": "local",
-        "address": "223.5.5.5",
-        "detour": "direct"
+        "type": "udp",
+        "tag": "local_local",
+        "server": "119.29.29.29"
       },
       {
-        "tag": "remote",
-        "address": "tls://1.1.1.1",
+        "type": "https",
+        "tag": "remote_dns",
+        "server": "cloudflare-dns.com",
+        "domain_resolver": "hosts_dns",
+        "path": "/dns-query",
         "detour": "proxy"
       },
       {
-        "tag": "fakeip",
-        "address": "fakeip"
+        "type": "udp",
+        "tag": "direct_dns",
+        "server": "119.29.29.29",
+        "domain_resolver": "local_local"
+      },
+      {
+        "type": "hosts",
+        "tag": "hosts_dns",
+        "predefined": {
+          "dns.google": [
+            "8.8.8.8",
+            "8.8.4.4"
+          ],
+          "dns.alidns.com": [
+            "223.5.5.5",
+            "223.6.6.6"
+          ],
+          "one.one.one.one": [
+            "1.1.1.1",
+            "1.0.0.1"
+          ],
+          "cloudflare-dns.com": [
+            "104.16.249.249",
+            "104.16.248.249"
+          ],
+          "doh.pub": [
+            "1.12.12.12",
+            "120.53.53.53"
+          ],
+          "dot.pub": [
+            "1.12.12.12",
+            "120.53.53.53"
+          ]
+        }
       }
     ],
     "rules": [
       {
-        "geosite": "cn",
-        "server": "local"
+        "server": "hosts_dns",
+        "ip_accept_any": true
+      },
+      {
+        "server": "direct_dns",
+        "rule_set": "geosite-cn"
+      },
+      {
+        "server": "remote_dns",
+        "query_type": [
+          "A",
+          "AAAA"
+        ]
       }
     ],
-    "fakeip": {
-      "enabled": true,
-      "inet4_range": "198.18.0.0/15"
-    },
-    "final": "remote"
+    "final": "remote_dns",
+    "independent_cache": true
   },
   "inbounds": [
-    {
-      "type": "tun",
-      "tag": "tun-in",
-      "interface_name": "utun-proxycli",
-      "address": [
-        "172.19.0.1/30",
-        "fdfe:dcba:9876::1/126"
-      ],
-      "auto_route": true,
-      "auto_redirect": true,
-      "strict_route": true,
-      "stack": "system"
-    },
     {
       "type": "mixed",
       "tag": "mixed-in",
       "listen": "127.0.0.1",
       "listen_port": 7890
+    },
+    {
+      "type": "tun",
+      "tag": "tun-in",
+      "interface_name": "utun8",
+      "address": [
+        "172.19.0.1/30",
+        "fdfe:dcba:9876::1/126"
+      ],
+      "auto_route": true,
+      "auto_redirect": false,
+      "strict_route": true,
+      "stack": "system"
     }
   ],
   "outbounds": [
+    {
+      "type": "direct",
+      "tag": "direct"
+    },
     {
       "type": "selector",
       "tag": "proxy",
@@ -62,52 +109,133 @@
       ]
     },
     {
-      "type": "vmess",
-      "tag": "vmess-one",
+      "alter_id": 0,
+      "security": "auto",
       "server": "example1.invalid",
       "server_port": 443,
-      "uuid": "00000000-0000-0000-0000-000000000001",
-      "security": "auto",
-      "alter_id": 0,
+      "tag": "vmess-one",
       "tls": {
         "enabled": true,
         "server_name": "example1.invalid"
       },
       "transport": {
-        "type": "ws",
-        "path": "/proxy",
         "headers": {
           "Host": "example1.invalid"
-        }
-      }
+        },
+        "path": "/proxy",
+        "type": "ws"
+      },
+      "type": "vmess",
+      "uuid": "00000000-0000-0000-0000-000000000001"
     },
     {
-      "type": "vmess",
-      "tag": "vmess-two",
+      "alter_id": 0,
+      "security": "auto",
       "server": "example2.invalid",
       "server_port": 443,
-      "uuid": "00000000-0000-0000-0000-000000000002",
-      "security": "auto",
-      "alter_id": 0,
+      "tag": "vmess-two",
       "tls": {
         "enabled": true,
         "server_name": "example2.invalid"
-      }
-    },
-    {
-      "type": "direct",
-      "tag": "direct"
+      },
+      "type": "vmess",
+      "uuid": "00000000-0000-0000-0000-000000000002"
     }
   ],
   "route": {
-    "rules": [
+    "auto_detect_interface": true,
+    "default_domain_resolver": {
+      "server": "direct_dns"
+    },
+    "rule_set": [
       {
-        "geoip": "cn",
-        "outbound": "direct"
+        "type": "local",
+        "tag": "geoip-cn",
+        "format": "binary",
+        "path": "/Users/example/.config/proxycli/rule-sets/geoip-cn.srs"
       },
       {
-        "geosite": "cn",
-        "outbound": "direct"
+        "type": "local",
+        "tag": "geosite-cn",
+        "format": "binary",
+        "path": "/Users/example/.config/proxycli/rule-sets/geosite-cn.srs"
+      }
+    ],
+    "rules": [
+      {
+        "action": "sniff"
+      },
+      {
+        "protocol": [
+          "dns"
+        ],
+        "action": "hijack-dns"
+      },
+      {
+        "outbound": "direct",
+        "ip_cidr": [
+          "0.0.0.0/8",
+          "10.0.0.0/8",
+          "100.64.0.0/10",
+          "127.0.0.0/8",
+          "169.254.0.0/16",
+          "172.16.0.0/12",
+          "192.168.0.0/16",
+          "224.0.0.0/4",
+          "240.0.0.0/4",
+          "255.255.255.255/32",
+          "::1/128",
+          "fc00::/7",
+          "fe80::/10",
+          "ff00::/8"
+        ]
+      },
+      {
+        "network": [
+          "udp"
+        ],
+        "port": [
+          443
+        ],
+        "action": "reject"
+      },
+      {
+        "outbound": "direct",
+        "ip_cidr": [
+          "223.5.5.5",
+          "223.6.6.6",
+          "119.29.29.29",
+          "1.12.12.12",
+          "120.53.53.53",
+          "180.76.76.76",
+          "114.114.114.114",
+          "114.114.115.115",
+          "1.2.4.8",
+          "210.2.4.8"
+        ]
+      },
+      {
+        "outbound": "direct",
+        "domain_suffix": [
+          "deepseek.com",
+          "dashscope.aliyuncs.com",
+          "bigmodel.cn",
+          "volces.com",
+          "moonshot.cn",
+          "aliyuncs.com",
+          ".cn",
+          "alidns.com",
+          "doh.pub",
+          "dot.pub"
+        ]
+      },
+      {
+        "outbound": "direct",
+        "rule_set": "geoip-cn"
+      },
+      {
+        "outbound": "direct",
+        "rule_set": "geosite-cn"
       }
     ],
     "final": "proxy"

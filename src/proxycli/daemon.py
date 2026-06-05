@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import json
 import re
+import shutil
 import signal
 import subprocess
 import time
@@ -78,6 +79,28 @@ def _is_running(pid: int) -> bool:
     return True
 
 
+def _is_sing_box_process(pid: int) -> bool:
+    """Return whether *pid* appears to be a sing-box process."""
+    ps = shutil.which("ps")
+    if ps is None:
+        return True
+    try:
+        result = subprocess.run(
+            [ps, "-p", str(pid), "-o", "args="],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+    except OSError:
+        return True
+    return result.returncode == 0 and "sing-box" in result.stdout
+
+
+def _is_managed_process(pid: int) -> bool:
+    """Return whether the PID file points at a live sing-box process."""
+    return _is_running(pid) and _is_sing_box_process(pid)
+
+
 def _process_is_alive(process: subprocess.Popen[bytes]) -> bool:
     """Return whether a Popen process still appears to be running."""
     if process.poll() is not None:
@@ -141,8 +164,10 @@ def start_daemon(config_path: Path | None = None, check_health: bool = True) -> 
     if config_path is None:
         config_path = default_config_path()
     existing_pid = _read_pid()
-    if existing_pid and _is_running(existing_pid):
+    if existing_pid and _is_managed_process(existing_pid):
         raise RuntimeError(f"sing-box is already running with PID {existing_pid}")
+    if existing_pid:
+        PID_PATH.unlink(missing_ok=True)
 
     app_dir().mkdir(parents=True, exist_ok=True)
     config_path = config_path.expanduser()
@@ -151,17 +176,19 @@ def start_daemon(config_path: Path | None = None, check_health: bool = True) -> 
     # Truncate log on fresh start
     LOG_PATH.write_text("", encoding="utf-8")
     log_file = LOG_PATH.open("ab")
-    process = subprocess.Popen(
-        ["sing-box", "run", "-c", str(config_path)],
-        stdout=log_file,
-        stderr=subprocess.STDOUT,
-        start_new_session=True,
-        env={
-            **os.environ,
-            "ENABLE_DEPRECATED_LEGACY_DNS_SERVERS": "true",
-            "ENABLE_DEPRECATED_LEGACY_DNS_FAKEIP_OPTIONS": "true",
-        },
-    )
+    try:
+        process = subprocess.Popen(
+            ["sing-box", "run", "-c", str(config_path)],
+            stdout=log_file,
+            stderr=subprocess.STDOUT,
+            start_new_session=True,
+            env={
+                **os.environ,
+                "ENABLE_DEPRECATED_LEGACY_DNS_SERVERS": "true",
+            },
+        )
+    finally:
+        log_file.close()
     PID_PATH.write_text(f"{process.pid}\n", encoding="utf-8")
 
     if check_health:
@@ -175,11 +202,15 @@ def stop_daemon(process: subprocess.Popen[bytes] | None = None) -> None:
     pid = process.pid if process is not None else _read_pid()
     if pid is None:
         return
+    if process is None and not _is_sing_box_process(pid):
+        PID_PATH.unlink(missing_ok=True)
+        return
 
     try:
         os.kill(pid, signal.SIGTERM)
     except ProcessLookupError:
-        pass
+        PID_PATH.unlink(missing_ok=True)
+        return
 
     if process is not None:
         try:
@@ -191,9 +222,15 @@ def stop_daemon(process: subprocess.Popen[bytes] | None = None) -> None:
         deadline = time.time() + 10
         while time.time() < deadline and _is_running(pid):
             time.sleep(0.1)
+        if _is_running(pid):
+            os.kill(pid, signal.SIGKILL)
+            deadline = time.time() + 5
+            while time.time() < deadline and _is_running(pid):
+                time.sleep(0.1)
+        if _is_running(pid):
+            raise RuntimeError(f"failed to stop sing-box PID {pid}")
 
-    if PID_PATH.exists():
-        PID_PATH.unlink()
+    PID_PATH.unlink(missing_ok=True)
 
 
 def restart_daemon(
@@ -211,7 +248,12 @@ def restart_daemon(
 def status_daemon() -> bool:
     """Return whether the PID-file sing-box process appears to be running."""
     pid = _read_pid()
-    return bool(pid and _is_running(pid))
+    if not pid:
+        return False
+    if _is_managed_process(pid):
+        return True
+    PID_PATH.unlink(missing_ok=True)
+    return False
 
 
 def reload_daemon(use_sudo: bool = False) -> None:

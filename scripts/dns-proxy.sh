@@ -1,7 +1,7 @@
 #!/bin/bash
 # Set macOS DNS to a public IP that goes through sing-box TUN.
-# The DNS queries will be hijacked by sing-box's hijack-dns rule
-# and resolved via the proxy (fakeip + remote_dns chain).
+# The DNS queries are hijacked by sing-box's hijack-dns route rule
+# and resolved through direct_dns or remote_dns according to the generated config.
 #
 # Usage: sudo scripts/dns-proxy.sh [DNS_IP]
 #   Default DNS_IP: 8.8.8.8 (also works with 1.1.1.1, etc.)
