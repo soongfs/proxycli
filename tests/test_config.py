@@ -90,3 +90,25 @@ def test_generate_config_with_default_node(tmp_path: Path) -> None:
 
     assert data["outbounds"][1]["outbounds"] == ["node-a"]
     assert data["outbounds"][2]["tag"] == "node-a"
+
+
+def test_generated_config_routes_private_networks_direct(tmp_path: Path) -> None:
+    output_path = tmp_path / "config.json"
+    generate_config(sample_nodes(), output_path)
+    data = read_config(output_path)
+
+    direct_ip_cidrs = {
+        cidr
+        for rule in data["route"]["rules"]
+        if rule.get("outbound") == "direct" and "ip_cidr" in rule
+        for cidr in rule["ip_cidr"]
+    }
+
+    assert "10.0.0.0/8" in direct_ip_cidrs
+    assert "172.16.0.0/12" in direct_ip_cidrs
+    assert "192.168.0.0/16" in direct_ip_cidrs
+    assert "100.64.0.0/10" in direct_ip_cidrs
+    assert "127.0.0.0/8" in direct_ip_cidrs
+    assert "169.254.0.0/16" in direct_ip_cidrs
+    assert "fc00::/7" in direct_ip_cidrs
+    assert "fe80::/10" in direct_ip_cidrs
